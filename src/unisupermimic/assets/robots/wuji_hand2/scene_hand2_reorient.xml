@@ -213,7 +213,7 @@
         <inertial pos="-0.00285189 -0.00108477 -0.0169638" quat="-0.518244 -0.181127 0.833641 0.0604885" mass="0.069" diaginertia="2.60454e-05 2.50848e-05 1.69269e-05" />
         <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" material="matte_black" rgba="0 0 0 1" mesh="r_mount" />
         <geom name="right_mount_collision" type="mesh" group="2" rgba="0.8 0.6 1 0.3" mesh="r_mount" />
-      </body>
+      <body name="right_wrist_tag_frame" pos="4.522556223e-07 0.03715784018 0.0347387" quat="0.4999999848 -0.5000000152 -0.4999999848 -0.5000000152"><site name="right_wrist_tag" type="box" size="0.0252 0.0252 0.0006" group="1" rgba="1 0.9 0 0.5" /></body></body>
     </body>
   <body name="cube" pos="-0.108 0.0072 0.5616" quat="1 0 0 0" childclass="cube">
       <freejoint name="cube_freejoint" />
@@ -264,4 +264,4 @@
     <general name="right_finger5_joint3_actuator" joint="right_finger5_joint3" ctrlrange="-1.047 2.094" forcerange="-0.3 0.3" biastype="affine" gainprm="0.227294" biasprm="0 -0.227294 -0.00951005" />
     <general name="right_finger5_joint4_actuator" joint="right_finger5_joint4" ctrlrange="-1.047 1.57" forcerange="-0.3 0.3" biastype="affine" gainprm="0.196472" biasprm="0 -0.196472 -0.0090173" />
   </actuator>
-</mujoco>
+<sensor><touch name="right_finger1_tip_touch" site="right_finger1_tip" /><touch name="right_finger2_tip_touch" site="right_finger2_tip" /><touch name="right_finger3_tip_touch" site="right_finger3_tip" /><touch name="right_finger4_tip_touch" site="right_finger4_tip" /><touch name="right_finger5_tip_touch" site="right_finger5_tip" /></sensor><keyframe><key name="hand2_default" qpos="0.8 -0.3 0.5 0.4 0.45 -0.15 0.8 0.5 0.45 0.0 0.9 0.3 0.6 0.15 1.1 0.2 1.2 0.2 0.8 0.4 -0.108 0.0072 0.5616 1.0 0.0 0.0 0.0" qvel="0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0" /></keyframe></mujoco>

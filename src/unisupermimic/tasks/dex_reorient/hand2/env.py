@@ -80,6 +80,10 @@ class DexHand2SuperMimicEnv(ManagerBasedRlEnv):
             updated.terminated,
             updated.truncated,
         )
+        # Store post-step fingertip contact labels for the optional contact
+        # head in Uni-SuperMimic's world model.  The touch sensors are read
+        # from the same packed phase as ``command.state()``.
+        transition["contact"] = (command.tip_contact() > 1.0e-6).to(torch.float32)
         updated.info[SUPERMIMIC_TRANSITION_KEY] = transition
         updated.info[SUPERMIMIC_STATE_KEY] = self._current_info()
         self._pre_action = None

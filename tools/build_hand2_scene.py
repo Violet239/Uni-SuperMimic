@@ -55,6 +55,65 @@ assert cube_body is not None
 cube_body.set('pos', '-0.108 0.0072 0.5616')
 cube_body.set('quat', '1 0 0 0')
 worldbody.append(cube_body)
+
+# Match Dex-SuperMimic's reorient grasp pose.  Keeping this as a MuJoCo
+# keyframe makes it the UniSim default qpos, so action defaults and reset
+# state use the same bent-hand configuration.
+hand2_default_joint_pos = [
+    0.8, -0.3, 0.5, 0.4,
+    0.45, -0.15, 0.8, 0.5,
+    0.45, 0.0, 0.9, 0.3,
+    0.6, 0.15, 1.1, 0.2,
+    1.2, 0.2, 0.8, 0.4,
+]
+keyframe = hand_root.find('keyframe')
+if keyframe is None:
+    keyframe = ET.SubElement(hand_root, 'keyframe')
+ET.SubElement(keyframe, 'key', {
+    'name': 'hand2_default',
+    'qpos': ' '.join(str(value) for value in (*hand2_default_joint_pos, -0.108, 0.0072, 0.5616, 1.0, 0.0, 0.0, 0.0)),
+    'qvel': ' '.join('0.0' for _ in range(26)),
+})
+
+# Add the calibrated wrist-tag frame used by Dex-Supermimic observations.
+def _mul_pose(pos1, quat1, pos2, quat2):
+    out_pos = __import__("numpy").zeros(3, dtype=float)
+    out_quat = __import__("numpy").zeros(4, dtype=float)
+    mujoco.mju_mulPose(out_pos, out_quat, pos1, quat1, pos2, quat2)
+    return out_pos, out_quat
+
+mount = next(body for body in worldbody.iter("body") if body.get("name") == "right_mount")
+mount_pos = [float(x) for x in mount.get("pos", "0 0 0").split()]
+mount_quat = [float(x) for x in mount.get("quat", "1 0 0 0").split()]
+inv_mount_pos = __import__("numpy").zeros(3, dtype=float)
+inv_mount_quat = __import__("numpy").zeros(4, dtype=float)
+mujoco.mju_negPose(inv_mount_pos, inv_mount_quat, mount_pos, mount_quat)
+calibrated_pos = (-0.0030000041, -0.000250110803, 0.0285)
+calibrated_quat = (1.0, 0.0, 0.0, -0.0000081995)
+tag_mount_pos = (0.0, 0.037408, 0.034737)
+tag_mount_quat = (0.5, -0.5, -0.5, -0.5)
+calibrated_tag_pos, calibrated_tag_quat = _mul_pose(calibrated_pos, calibrated_quat, tag_mount_pos, tag_mount_quat)
+tag_pos, tag_quat = _mul_pose(inv_mount_pos, inv_mount_quat, calibrated_tag_pos, calibrated_tag_quat)
+tag_body = ET.SubElement(mount, "body", {
+    "name": "right_wrist_tag_frame",
+    "pos": " ".join(f"{float(x):.10g}" for x in tag_pos),
+    "quat": " ".join(f"{float(x):.10g}" for x in tag_quat),
+})
+ET.SubElement(tag_body, "site", {
+    "name": "right_wrist_tag", "type": "box",
+    "size": "0.0252 0.0252 0.0006", "group": "1",
+    "rgba": "1 0.9 0 0.5",
+})
+
+# Touch sensors provide a backend-neutral first contact signal for the five fingertips.
+sensors = hand_root.find("sensor")
+if sensors is None:
+    sensors = ET.SubElement(hand_root, "sensor")
+for finger in range(1, 6):
+    ET.SubElement(sensors, "touch", {
+        "name": f"right_finger{finger}_tip_touch",
+        "site": f"right_finger{finger}_tip",
+    })
 # Use deterministic simulator settings matching the Dex reorient task.
 option = hand_root.find('option')
 assert option is not None

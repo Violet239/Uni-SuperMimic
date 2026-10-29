@@ -8,6 +8,7 @@ HAND2_JOINT_NAMES = [
 HAND2_ACTUATOR_NAMES = [f"{name}_actuator" for name in HAND2_JOINT_NAMES]
 HAND2_BODY_NAMES = [
     "right_palm_link",
+    "right_wrist_tag_frame",
     *[f"right_finger{finger}_link{link}" for finger in range(1, 6) for link in range(1, 5)],
     *[f"right_finger{finger}_tip_sensor" for finger in range(1, 6)],
 ]

@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from unilab.rl.contracts.env import EnvProtocol
 
 from unisupermimic.rl.contracts.supermimic import (
@@ -122,6 +123,10 @@ class SuperMimicLearner:
         self._bridged = self.device != self.env_device
         mdp = get_supermimic_mdp(env)
         self.mdp = mdp.to(self.device) if self._bridged else mdp
+        contact_dim = getattr(self.mdp, "contact_dim", 0)
+        if isinstance(contact_dim, bool) or not isinstance(contact_dim, int) or contact_dim < 0:
+            raise ValueError(f"MDP contact_dim must be a non-negative integer, got {contact_dim!r}")
+        self.contact_dim = contact_dim
 
         # TF32 only pays off for fp32 (amp="none") training: under bf16 autocast
         # the heavy GEMMs already run in bf16, while on ROCm a TF32 bmm over the
@@ -152,6 +157,7 @@ class SuperMimicLearner:
             self.device,
             num_joints=self.mdp.num_joints,
             context_dim=self.mdp.context_dim,
+            contact_dim=self.contact_dim,
         )
         self.obs_hist = torch.zeros(env.num_envs, cfg.hist, self.mdp.obs_dim, device=self.device)
         self.err_floor = torch.cat(
@@ -191,6 +197,7 @@ class SuperMimicLearner:
         kwargs = {
             "num_joints": self.mdp.num_joints,
             "context_dim": self.mdp.context_dim,
+            "contact_dim": self.contact_dim,
         }
         if self.cfg.test_hidden_dims is not None:
             return WorldModel(hidden=self.cfg.test_hidden_dims, **kwargs)
@@ -244,17 +251,24 @@ class SuperMimicLearner:
 
     def _wm_rollout(
         self, states: torch.Tensor, actions: torch.Tensor, contexts: torch.Tensor
-    ) -> State:
+    ) -> State | tuple[State, torch.Tensor]:
         state = unflatten_state(states[:, 0])
         predictions = []
+        contacts = []
         for index in range(self.cfg.wm_window):
-            state = self.wm.step(
-                state,
-                actions[:, index],
-                self.mdp.normalize_context(contexts[:, index]),
-            )
+            if self.contact_dim:
+                state, contact = self.wm.step_with_contact(
+                    state, actions[:, index], self.mdp.normalize_context(contexts[:, index])
+                )
+                contacts.append(contact)
+            else:
+                state = self.wm.step(
+                    state,
+                    actions[:, index],
+                    self.mdp.normalize_context(contexts[:, index]),
+                )
             predictions.append(state)
-        return (
+        state_predictions = (
             torch.stack([prediction[0] for prediction in predictions], 1),
             torch.stack([prediction[1] for prediction in predictions], 1),
             torch.stack([prediction[2] for prediction in predictions], 1),
@@ -262,14 +276,35 @@ class SuperMimicLearner:
             torch.stack([prediction[4] for prediction in predictions], 1),
             torch.stack([prediction[5] for prediction in predictions], 1),
         )
+        if self.contact_dim:
+            return state_predictions, torch.stack(contacts, 1)
+        return state_predictions
 
     def _wm_err(
-        self, predicted: State, next_states: torch.Tensor, mask: torch.Tensor
+        self,
+        predicted: State,
+        next_states: torch.Tensor,
+        mask: torch.Tensor,
+        predicted_contacts: torch.Tensor | None = None,
+        contacts: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         std = torch.maximum(self.wm.out_norm.std(), self.err_floor)
         error = (self.wm.state_error(predicted, unflatten_state(next_states)) / std) ** 2
         error = error.mean(-1)
+        if self.contact_dim:
+            if predicted_contacts is None or contacts is None:
+                raise ValueError("contact predictions and labels are required for contact_dim > 0")
+            contact_error = F.binary_cross_entropy_with_logits(
+                predicted_contacts, contacts.to(dtype=predicted_contacts.dtype), reduction="none"
+            ).mean(-1)
+            error = error + 0.1 * contact_error
         return (error * mask).sum() / next_states.shape[0], error[:, -1]
+
+    def _goal_for(self, frames: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
+        fn = getattr(self.mdp, "goal_with_context", None)
+        if callable(fn):
+            return fn(frames, context, self.cfg.goal_frames)
+        return self.mdp.goal(frames, self.cfg.goal_frames)
 
     def _imag_step(
         self,
@@ -280,13 +315,20 @@ class SuperMimicLearner:
         context: torch.Tensor,
         normalized_context: torch.Tensor,
         goal: torch.Tensor,
-    ) -> tuple[State, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[State, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | tuple[
+        State, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
+    ]:
         action = self.pi(obs_hist, goal)
-        next_state = self.wm.step(state, action, normalized_context)
+        if self.contact_dim:
+            next_state, contact = self.wm.step_with_contact(state, action, normalized_context)
+        else:
+            next_state = self.wm.step(state, action, normalized_context)
         next_frames = frames + 1
         obs = self.mdp.add_noise(self.mdp.obs(next_state, action, context, next_frames))
         next_hist = torch.cat((obs_hist[:, 1:], obs.unsqueeze(1)), 1)
-        next_goal = self.mdp.goal(next_frames, self.cfg.goal_frames)
+        next_goal = self._goal_for(next_frames, context)
+        if self.contact_dim:
+            return next_state, action, next_hist, next_frames, next_goal, contact
         return next_state, action, next_hist, next_frames, next_goal
 
     def _reward_term(
@@ -295,10 +337,20 @@ class SuperMimicLearner:
         frames: torch.Tensor,
         action: torch.Tensor,
         previous_action: torch.Tensor,
+        context: torch.Tensor,
+        contacts: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        return self.mdp.reward(state, frames, action, previous_action), self.mdp.soft_termination(
-            state, frames
-        )
+        contact_reward_fn = getattr(self.mdp, "reward_with_context_and_contact", None)
+        reward_fn = getattr(self.mdp, "reward_with_context", None)
+        if self.contact_dim and callable(contact_reward_fn):
+            if contacts is None:
+                raise ValueError("contact predictions are required by the contact-aware reward")
+            reward = contact_reward_fn(state, frames, action, previous_action, context, contacts)
+        elif callable(reward_fn):
+            reward = reward_fn(state, frames, action, previous_action, context)
+        else:
+            reward = self.mdp.reward(state, frames, action, previous_action)
+        return reward, self.mdp.soft_termination(state, frames)
 
     def _critic_input(
         self,
@@ -320,7 +372,7 @@ class SuperMimicLearner:
             self.obs_hist = torch.where(
                 fresh[:, None, None], obs.unsqueeze(1).expand_as(self.obs_hist), shifted
             )
-            goal = self.mdp.goal(info["f"], self.cfg.goal_frames)
+            goal = self._goal_for(info["f"], info["xi"])
             self.pi.obs_norm.update(obs)
             self.pi.goal_norm.update(goal)
             action = self.pi(self.obs_hist, goal)
@@ -354,7 +406,17 @@ class SuperMimicLearner:
     def wm_update(self) -> tuple[torch.Tensor, torch.Tensor]:
         window = self.buffer.sample_windows(self.cfg.wm_batch, self.cfg.wm_window)
         predicted = self._wm_rollout_fn(window["s"], window["a"], window["xi"])
-        loss, last_error = self._wm_err_fn(predicted, window["s1"], window["mask"])
+        if self.contact_dim:
+            predicted_state, predicted_contacts = predicted
+            loss, last_error = self._wm_err_fn(
+                predicted_state,
+                window["s1"],
+                window["mask"],
+                predicted_contacts,
+                window["contact"],
+            )
+        else:
+            loss, last_error = self._wm_err_fn(predicted, window["s1"], window["mask"])
         self.opt_wm.zero_grad(set_to_none=True)
         loss.backward()
         nn.utils.clip_grad_norm_(self.wm.parameters(), 1.0)
@@ -401,14 +463,14 @@ class SuperMimicLearner:
         _set_requires_grad(self.critic, False)
 
         batch_size = self.cfg.pi_batch
-        initial_goal = self.mdp.goal(frames, self.cfg.goal_frames)
+        initial_goal = self._goal_for(frames, context)
         goal = initial_goal
         initial_state = state
-        states, actions, previous_actions, all_frames, goals = [], [], [], [], []
+        states, actions, previous_actions, all_frames, goals, contacts = [], [], [], [], [], []
         try:
             for _ in range(self.cfg.horizon):
                 previous_actions.append(previous_action)
-                state, previous_action, obs_hist, frames, goal = self._imag_step_fn(
+                result = self._imag_step_fn(
                     state,
                     obs_hist,
                     previous_action,
@@ -417,6 +479,11 @@ class SuperMimicLearner:
                     normalized_context,
                     goal,
                 )
+                if self.contact_dim:
+                    state, previous_action, obs_hist, frames, goal, contact = result
+                    contacts.append(contact)
+                else:
+                    state, previous_action, obs_hist, frames, goal = result
                 states.append(state)
                 actions.append(previous_action)
                 all_frames.append(frames)
@@ -429,9 +496,23 @@ class SuperMimicLearner:
                 State, tuple(flatten([item[index] for item in states]) for index in range(6))
             )
             flat_frames = flatten(all_frames)
-            rewards, dones = self._reward_term_fn(
-                all_states, flat_frames, flatten(actions), flatten(previous_actions)
+            flat_context = context.unsqueeze(0).expand(self.cfg.horizon, -1, -1).reshape(
+                self.cfg.horizon * batch_size, -1
             )
+            if self.contact_dim:
+                flat_contacts = flatten(contacts)
+                rewards, dones = self._reward_term_fn(
+                    all_states,
+                    flat_frames,
+                    flatten(actions),
+                    flatten(previous_actions),
+                    flat_context,
+                    flat_contacts,
+                )
+            else:
+                rewards, dones = self._reward_term_fn(
+                    all_states, flat_frames, flatten(actions), flatten(previous_actions), flat_context
+                )
             rewards = rewards.view(self.cfg.horizon, batch_size)
             dones = dones.view(self.cfg.horizon, batch_size)
             alive = torch.cumprod(1 - dones, 0)

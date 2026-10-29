@@ -8,9 +8,10 @@ import torch
 def _make_fields(
     num_joints: int,
     context_dim: int,
+    contact_dim: int = 0,
 ) -> dict[str, tuple[int | tuple[()], torch.dtype]]:
     state_dim = 13 + 2 * num_joints
-    return {
+    fields = {
         "s": (state_dim, torch.float32),
         "s1": (state_dim, torch.float32),
         "a": (num_joints, torch.float32),
@@ -21,6 +22,9 @@ def _make_fields(
         "ep_step": ((), torch.int32),
         "done": ((), torch.bool),
     }
+    if contact_dim > 0:
+        fields["contact"] = (contact_dim, torch.float32)
+    return fields
 
 
 FIELDS = _make_fields(29, 33)
@@ -34,11 +38,12 @@ class ReplayBuffer:
         device: str | torch.device,
         num_joints: int = 29,
         context_dim: int = 33,
+        contact_dim: int = 0,
     ):
         self.T = T
         self.N = N
         self.device = torch.device(device)
-        self.fields = _make_fields(num_joints, context_dim)
+        self.fields = _make_fields(num_joints, context_dim, contact_dim)
         self.data = {}
         for key, (shape, dtype) in self.fields.items():
             field_shape = (T, N) + ((shape,) if isinstance(shape, int) else shape)
@@ -65,7 +70,11 @@ class ReplayBuffer:
         ages = start.unsqueeze(-1) + torch.arange(k, device=self.device)
         rows = self._row(ages)
         envs = env.unsqueeze(-1).expand_as(rows)
-        out = {key: self.data[key][rows, envs] for key in ("s", "s1", "a", "xi", "done")}
+        out = {
+            key: self.data[key][rows, envs]
+            for key in ("s", "s1", "a", "xi", "done", "contact")
+            if key in self.data
+        }
         done = out["done"].float()
         mask = torch.cumprod(
             torch.cat((torch.ones(B, 1, device=self.device), 1 - done[:, :-1]), -1),

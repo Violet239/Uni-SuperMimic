@@ -92,13 +92,18 @@ class WorldModel(nn.Module):
         hidden: Sequence[int] = (2048, 2048, 2048),
         num_joints: int = 29,
         context_dim: int = 33,
+        contact_dim: int = 0,
     ):
         super().__init__()
         self.num_joints = num_joints
         self.context_dim = context_dim
+        if isinstance(contact_dim, bool) or contact_dim < 0:
+            raise ValueError(f"contact_dim must be a non-negative integer, got {contact_dim!r}")
+        self.contact_dim = int(contact_dim)
         self.in_dim = 13 + 3 * num_joints + context_dim
         self.out_dim = 12 + 2 * num_joints
-        self.net = mlp(self.in_dim, hidden, self.out_dim, act=nn.SiLU, layer_norm=True)
+        self.net_out_dim = self.out_dim + self.contact_dim
+        self.net = mlp(self.in_dim, hidden, self.net_out_dim, act=nn.SiLU, layer_norm=True)
         output = self.net[-1]
         assert isinstance(output, nn.Linear)
         nn.init.zeros_(output.weight)
@@ -138,12 +143,30 @@ class WorldModel(nn.Module):
         action: torch.Tensor,
         normalized_context: torch.Tensor,
     ) -> State:
+        next_state, _ = self.step_with_contact(state, action, normalized_context)
+        return next_state
+
+    def step_with_contact(
+        self,
+        state: State,
+        action: torch.Tensor,
+        normalized_context: torch.Tensor,
+    ) -> tuple[State, torch.Tensor]:
+        """Predict the next state and optional contact logits.
+
+        The contact head is opt-in so existing motion tasks retain the exact
+        state-only world-model contract.  State increments remain normalized
+        with ``out_norm``; contact logits are emitted directly from the shared
+        trunk and are therefore suitable for a BCE-with-logits loss.
+        """
         position, rotation, lin_vel, ang_vel, joint_pos, joint_vel = state
         prediction = run_mlp(
             self.net,
             self.in_norm(self.inputs(state, action, normalized_context)),
         )
-        increment = prediction * self.out_norm.std() + self.out_norm.mean
+        state_prediction = prediction[..., : self.out_dim]
+        contact_logits = prediction[..., self.out_dim :]
+        increment = state_prediction * self.out_norm.std() + self.out_norm.mean
         heading = yaw_mat(rotation)
         d_position, d_rotation, d_lin_vel, d_ang_vel, d_joint_pos, d_joint_vel = increment.split(
             (3, 3, 3, 3, self.num_joints, self.num_joints), -1
@@ -153,12 +176,15 @@ class WorldModel(nn.Module):
         next_lin_vel = lin_vel + matvec(rotation, d_lin_vel)
         next_ang_vel = ang_vel + matvec(rotation, d_ang_vel)
         return (
-            next_position,
-            next_rotation,
-            next_lin_vel,
-            next_ang_vel,
-            joint_pos + d_joint_pos,
-            joint_vel + d_joint_vel,
+            (
+                next_position,
+                next_rotation,
+                next_lin_vel,
+                next_ang_vel,
+                joint_pos + d_joint_pos,
+                joint_vel + d_joint_vel,
+            ),
+            contact_logits,
         )
 
     @staticmethod

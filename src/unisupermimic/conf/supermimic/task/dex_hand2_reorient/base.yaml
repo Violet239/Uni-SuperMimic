@@ -4,6 +4,7 @@ env:
   seed: null
   scene:
     model_file: src/unisupermimic/assets/robots/wuji_hand2/scene_hand2_reorient.xml
+    default_keyframe_name: hand2_default
     entities:
       robot:
         root_body_name: right_palm_link
@@ -51,6 +52,7 @@ env:
           - right_finger5_joint4_actuator
         body_names:
           - right_palm_link
+          - right_wrist_tag_frame
       object:
         root_body_name: cube
         body_names: [cube]
@@ -74,11 +76,14 @@ env:
           params: {command_name: hand2, num_frames: 1, entity_name: object}
   actions:
     joint_pos:
-      _target_: unilab.envs.mdp.actions.JointPositionActionCfg
+      _target_: unisupermimic.tasks.dex_reorient.hand2.manager_terms.DexHand2ActionCfg
       entity_name: robot
       actuator_names: *hand2_joints
-      scale: 0.5
-      use_default_offset: true
+      scale: 1.0
+      offset: 0.0
+      action_scale: 0.5
+      ema_alpha: 0.3
+      warmup_steps: 20
   commands:
     hand2:
       _target_: unisupermimic.tasks.dex_reorient.hand2.manager_terms.DexHand2CommandCfg
@@ -96,6 +101,10 @@ env:
       _target_: unilab.managers.TerminationTermCfg
       func: unilab.envs.mdp.nan_detection
       time_out: false
+    cage_drop:
+      _target_: unilab.managers.TerminationTermCfg
+      func: unisupermimic.tasks.dex_reorient.hand2.manager_terms.hand2_cage_drop
+      time_out: false
   policy_observation_group: policy
   critic_observation_group: critic
 
@@ -104,11 +113,31 @@ training:
   sim_backend: mujoco
 
 reward:
-  alive:
+  orientation_alignment:
     _target_: unilab.managers.RewardTermCfg
-    func: unilab.envs.mdp.is_alive
-    weight: 1.0
+    func: unisupermimic.tasks.dex_reorient.hand2.manager_terms.hand2_orientation_reward
+    weight: 15.0
+    params: {command_name: hand2}
+  hand_pose:
+    _target_: unilab.managers.RewardTermCfg
+    func: unisupermimic.tasks.dex_reorient.hand2.manager_terms.hand2_pose_penalty
+    weight: -0.2
+    params: {command_name: hand2}
+  cage_escape:
+    _target_: unilab.managers.RewardTermCfg
+    func: unisupermimic.tasks.dex_reorient.hand2.manager_terms.hand2_cage_escape
+    weight: -500.0
+    params: {command_name: hand2, margin: 0.15}
   action_rate:
     _target_: unilab.managers.RewardTermCfg
     func: unilab.envs.mdp.action_rate_l2
     weight: -0.001
+  fingertip_contact:
+    _target_: unilab.managers.RewardTermCfg
+    func: unisupermimic.tasks.dex_reorient.hand2.manager_terms.hand2_tip_contact_reward
+    weight: 0.25
+    params: {command_name: hand2, sensor_scale: 1.0e-3}
+
+algo:
+  hist: 3
+  goal_frames: 1
