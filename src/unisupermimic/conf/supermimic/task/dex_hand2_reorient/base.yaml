@@ -1,0 +1,114 @@
+# @package _global_
+# First environment-only smoke task. SuperMimic command/MDP is added next.
+env:
+  seed: null
+  scene:
+    model_file: src/unisupermimic/assets/robots/wuji_hand2/scene_hand2_reorient.xml
+    entities:
+      robot:
+        root_body_name: right_palm_link
+        joint_names: &hand2_joints
+          - right_finger1_joint1
+          - right_finger1_joint2
+          - right_finger1_joint3
+          - right_finger1_joint4
+          - right_finger2_joint1
+          - right_finger2_joint2
+          - right_finger2_joint3
+          - right_finger2_joint4
+          - right_finger3_joint1
+          - right_finger3_joint2
+          - right_finger3_joint3
+          - right_finger3_joint4
+          - right_finger4_joint1
+          - right_finger4_joint2
+          - right_finger4_joint3
+          - right_finger4_joint4
+          - right_finger5_joint1
+          - right_finger5_joint2
+          - right_finger5_joint3
+          - right_finger5_joint4
+        actuator_names: &hand2_actuators
+          - right_finger1_joint1_actuator
+          - right_finger1_joint2_actuator
+          - right_finger1_joint3_actuator
+          - right_finger1_joint4_actuator
+          - right_finger2_joint1_actuator
+          - right_finger2_joint2_actuator
+          - right_finger2_joint3_actuator
+          - right_finger2_joint4_actuator
+          - right_finger3_joint1_actuator
+          - right_finger3_joint2_actuator
+          - right_finger3_joint3_actuator
+          - right_finger3_joint4_actuator
+          - right_finger4_joint1_actuator
+          - right_finger4_joint2_actuator
+          - right_finger4_joint3_actuator
+          - right_finger4_joint4_actuator
+          - right_finger5_joint1_actuator
+          - right_finger5_joint2_actuator
+          - right_finger5_joint3_actuator
+          - right_finger5_joint4_actuator
+        body_names:
+          - right_palm_link
+      object:
+        root_body_name: cube
+        body_names: [cube]
+  sim_dt: 0.01
+  ctrl_dt: 0.02
+  max_episode_seconds: 10.0
+  auto_reset: true
+  scale_rewards_by_dt: false
+  observations:
+    policy:
+      enable_corruption: false
+      terms:
+        obs:
+          func: unisupermimic.tasks.dex_reorient.hand2.manager_terms.hand2_obs
+          params: {command_name: hand2}
+    critic:
+      enable_corruption: false
+      terms:
+        goal:
+          func: unisupermimic.tasks.dex_reorient.hand2.manager_terms.hand2_goal
+          params: {command_name: hand2, num_frames: 1, entity_name: object}
+  actions:
+    joint_pos:
+      _target_: unilab.envs.mdp.actions.JointPositionActionCfg
+      entity_name: robot
+      actuator_names: *hand2_joints
+      scale: 0.5
+      use_default_offset: true
+  commands:
+    hand2:
+      _target_: unisupermimic.tasks.dex_reorient.hand2.manager_terms.DexHand2CommandCfg
+      entity_name: robot
+      object_name: object
+      context_dim: 46
+      resampling_time_range: [1.0e9, 1.0e9]
+  events: {}
+  terminations:
+    timeout:
+      _target_: unilab.managers.TerminationTermCfg
+      func: unilab.envs.mdp.time_out
+      time_out: true
+    nan:
+      _target_: unilab.managers.TerminationTermCfg
+      func: unilab.envs.mdp.nan_detection
+      time_out: false
+  policy_observation_group: policy
+  critic_observation_group: critic
+
+training:
+  task_name: DexHand2Reorient
+  sim_backend: mujoco
+
+reward:
+  alive:
+    _target_: unilab.managers.RewardTermCfg
+    func: unilab.envs.mdp.is_alive
+    weight: 1.0
+  action_rate:
+    _target_: unilab.managers.RewardTermCfg
+    func: unilab.envs.mdp.action_rate_l2
+    weight: -0.001

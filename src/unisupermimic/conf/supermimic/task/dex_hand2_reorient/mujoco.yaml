@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - /task/dex_hand2_reorient/base
+  - _self_
+
+training:
+  task_name: DexHand2Reorient
+  sim_backend: mujoco

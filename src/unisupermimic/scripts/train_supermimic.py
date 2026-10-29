@@ -119,8 +119,14 @@ def _close_env(env: Any) -> None:
 
 def main(cfg: DictConfig) -> None:
     ensure_registries()
-    if float(cfg.algo.gamma) != float(cfg.env.commands.motion.gamma):
-        raise ValueError("SuperMimic requires algo.gamma == env.commands.motion.gamma")
+    command_cfgs = cfg.env.commands
+    if command_cfgs:
+        command_name = "motion" if "motion" in command_cfgs else next(iter(command_cfgs))
+        command_gamma = command_cfgs[command_name].get("gamma", cfg.algo.gamma)
+        if float(cfg.algo.gamma) != float(command_gamma):
+            raise ValueError(
+                f"SuperMimic requires algo.gamma == env.commands.{command_name}.gamma"
+            )
     seed_info = apply_configured_training_seed(cfg, torch_runtime=True, cuda=True)
     device = get_default_device()
     bound_device = configure_backend_process_device(str(cfg.training.sim_backend), device)

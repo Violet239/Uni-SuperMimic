@@ -22,6 +22,7 @@ dependencies = [
     "imageio[ffmpeg]>=2.37",
     "mujoco~=3.11.0",
     "pillow>=10",
+    "wuji-description",
 ]
 
 [project.scripts]
@@ -65,3 +66,6 @@ venv = ".venv"
 include = ["src/unisupermimic"]
 reportMissingImports = "warning"
 reportMissingModuleSource = "none"
+
+[tool.uv.sources]
+wuji-description = { path = "third_party/wuji-description" }

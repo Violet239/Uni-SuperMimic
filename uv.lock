@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.10, <3.14"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -3465,6 +3465,7 @@ dependencies = [
     { name = "pillow", version = "12.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pillow", version = "13.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "unilab", extra = ["mjwarp", "motrix", "mujoco"] },
+    { name = "wuji-description" },
 ]
 
 [package.dev-dependencies]
@@ -3481,6 +3482,7 @@ requires-dist = [
     { name = "mujoco", specifier = "~=3.11.0" },
     { name = "pillow", specifier = ">=10" },
     { name = "unilab", extras = ["mjwarp", "mujoco", "motrix"], specifier = ">=1.5.1" },
+    { name = "wuji-description", directory = "third_party/wuji-description" },
 ]
 
 [package.metadata.requires-dev]
@@ -3685,6 +3687,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/a4/34/4dd12fc8bb7d61c91
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a1/38/df03f564f43cec2684823f3cccae1a652ee7face1cbaa76fb223096e64d7/werkzeug-3.1.9-py3-none-any.whl", hash = "sha256:6392e50c78460ba618e5b21f08a71f59c99ce99cdc6cf6e3dd7e6ccca8754fab", size = 228700, upload-time = "2026-09-27T18:33:39.685Z" },
 ]
+
+[[package]]
+name = "wuji-description"
+version = "0.1.0"
+source = { directory = "third_party/wuji-description" }
 
 [[package]]
 name = "xxhash"
